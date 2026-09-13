@@ -13,7 +13,6 @@ func TestAggregateCountsOneApprovedReview(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{pullRequest(10, "bob")},
 		map[int][]githubapi.Review{
 			10: {reviewEvent(10, "alice", "APPROVED", cutoff)},
@@ -32,7 +31,6 @@ func TestAggregateDeduplicatesRepeatedReviewsOnOnePullRequest(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{pullRequest(10, "bob")},
 		map[int][]githubapi.Review{
 			10: {
@@ -58,7 +56,6 @@ func TestAggregateCountsDistinctPullRequests(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{
 			pullRequest(10, "bob"),
 			pullRequest(11, "bob"),
@@ -76,12 +73,11 @@ func TestAggregateCountsDistinctPullRequests(t *testing.T) {
 	})
 }
 
-func TestAggregateKeepsCollaboratorsWithNoQualifyingReviews(t *testing.T) {
+func TestAggregateKeepsPullRequestAuthorsWithNoQualifyingReviews(t *testing.T) {
 	t.Parallel()
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{pullRequest(10, "alice")},
 		map[int][]githubapi.Review{
 			10: {reviewEvent(10, "bob", "APPROVED", cutoff.Add(-time.Second))},
@@ -91,7 +87,6 @@ func TestAggregateKeepsCollaboratorsWithNoQualifyingReviews(t *testing.T) {
 
 	assertMembers(t, stats, []MemberStat{
 		{Login: "alice", PullRequests: 0},
-		{Login: "bob", PullRequests: 0},
 	})
 }
 
@@ -100,7 +95,6 @@ func TestAggregateExcludesSelfReviewsAndPendingReviews(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{pullRequest(10, "alice")},
 		map[int][]githubapi.Review{
 			10: {
@@ -113,7 +107,6 @@ func TestAggregateExcludesSelfReviewsAndPendingReviews(t *testing.T) {
 
 	assertMembers(t, stats, []MemberStat{
 		{Login: "alice", PullRequests: 0},
-		{Login: "bob", PullRequests: 0},
 	})
 }
 
@@ -122,7 +115,6 @@ func TestAggregateCountsDismissedReviews(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob"),
 		[]githubapi.PullRequest{pullRequest(10, "bob")},
 		map[int][]githubapi.Review{
 			10: {reviewEvent(10, "alice", "DISMISSED", cutoff)},
@@ -141,7 +133,6 @@ func TestAggregateSortsMembersByReviewCountThenLogin(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alpha", "bob", "charlie", "zed"),
 		[]githubapi.PullRequest{
 			pullRequest(10, "author"),
 			pullRequest(11, "author"),
@@ -161,7 +152,7 @@ func TestAggregateSortsMembersByReviewCountThenLogin(t *testing.T) {
 		{Login: "bob", PullRequests: 2},
 		{Login: "alpha", PullRequests: 1},
 		{Login: "zed", PullRequests: 1},
-		{Login: "charlie", PullRequests: 0},
+		{Login: "author", PullRequests: 0},
 	})
 }
 
@@ -170,7 +161,6 @@ func TestAggregateBuildsDistinctMatrixLinksAndIncludesExternalReviewers(t *testi
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	stats := Aggregate(
-		collaborators("alice", "bob", "charlie"),
 		[]githubapi.PullRequest{
 			pullRequest(10, "bob"),
 			pullRequest(11, "charlie"),
@@ -197,7 +187,7 @@ func TestAggregateBuildsDistinctMatrixLinksAndIncludesExternalReviewers(t *testi
 
 	wantMatrix := ReviewMatrix{
 		Authors:   []string{"alice", "bob", "charlie"},
-		Reviewers: []string{"alice", "bob", "charlie", "eve"},
+		Reviewers: []string{"alice", "bob", "eve"},
 		Counts: map[string]map[string]int{
 			"alice":   {"bob": 1},
 			"bob":     {"alice": 1, "eve": 1},
@@ -207,15 +197,6 @@ func TestAggregateBuildsDistinctMatrixLinksAndIncludesExternalReviewers(t *testi
 	if !reflect.DeepEqual(stats.Matrix, wantMatrix) {
 		t.Fatalf("matrix = %#v, want %#v", stats.Matrix, wantMatrix)
 	}
-}
-
-func collaborators(logins ...string) []githubapi.Collaborator {
-	result := make([]githubapi.Collaborator, 0, len(logins))
-	for _, login := range logins {
-		result = append(result, githubapi.Collaborator{Login: login})
-	}
-
-	return result
 }
 
 func pullRequest(number int, author string) githubapi.PullRequest {

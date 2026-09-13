@@ -24,25 +24,20 @@ type RetroStats struct {
 }
 
 func Aggregate(
-	collaborators []githubapi.Collaborator,
 	pulls []githubapi.PullRequest,
 	reviewsByPull map[int][]githubapi.Review,
 	since time.Time,
 ) RetroStats {
 	members := make(map[string]struct{})
 	authors := make(map[string]struct{})
+	reviewers := make(map[string]struct{})
 	reviewedPullsByReviewer := make(map[string]map[int]struct{})
 	matrixPulls := make(map[string]map[string]map[int]struct{})
-
-	for _, collaborator := range collaborators {
-		if collaborator.Login != "" {
-			members[collaborator.Login] = struct{}{}
-		}
-	}
 
 	for _, pull := range pulls {
 		if pull.Author != "" {
 			authors[pull.Author] = struct{}{}
+			members[pull.Author] = struct{}{}
 		}
 
 		for _, review := range reviewsByPull[pull.Number] {
@@ -51,6 +46,7 @@ func Aggregate(
 			}
 
 			members[review.Reviewer] = struct{}{}
+			reviewers[review.Reviewer] = struct{}{}
 			addPullForReviewer(reviewedPullsByReviewer, review.Reviewer, pull.Number)
 
 			if pull.Author != "" {
@@ -61,7 +57,7 @@ func Aggregate(
 
 	memberStats := memberStatsFrom(members, reviewedPullsByReviewer)
 	authorLogins := sortedLogins(authors)
-	reviewerLogins := sortedLogins(members)
+	reviewerLogins := sortedLogins(reviewers)
 
 	return RetroStats{
 		Members: memberStats,

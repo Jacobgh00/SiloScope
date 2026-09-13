@@ -20,7 +20,7 @@ func WriteRetro(
 		return err
 	}
 
-	if _, err := fmt.Fprintln(writer, "Review participation"); err != nil {
+	if _, err := fmt.Fprintln(writer, "Repository participants"); err != nil {
 		return err
 	}
 	if err := writeParticipation(writer, stats.Members); err != nil {
@@ -50,7 +50,7 @@ func WriteRetro(
 
 func writeParticipation(writer io.Writer, members []reviewstats.MemberStat) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "Reviewer\tPRs reviewed"); err != nil {
+	if _, err := fmt.Fprintln(table, "Participant\tPRs reviewed"); err != nil {
 		return err
 	}
 

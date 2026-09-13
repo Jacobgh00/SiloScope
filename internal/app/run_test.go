@@ -80,8 +80,8 @@ func TestRunWithDependenciesUsesExplicitRepository(t *testing.T) {
 		t.Fatalf("current repository calls = %d, want 0", currentRepoCalls)
 	}
 
-	if got := client.collaboratorsRepository; got != (repository.Repository{Owner: "acme", Name: "frontend"}) {
-		t.Fatalf("collaborator repository = %#v, want acme/frontend", got)
+	if got := client.pullsRepository; got != (repository.Repository{Owner: "acme", Name: "frontend"}) {
+		t.Fatalf("pull request repository = %#v, want acme/frontend", got)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestRunWithDependenciesUsesCurrentRepositoryWhenRepoFlagIsAbsent(t *testing
 		t.Fatalf("exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
 	}
 
-	if got := client.collaboratorsRepository; got != (repository.Repository{Owner: "current", Name: "repository"}) {
-		t.Fatalf("collaborator repository = %#v, want current/repository", got)
+	if got := client.pullsRepository; got != (repository.Repository{Owner: "current", Name: "repository"}) {
+		t.Fatalf("pull request repository = %#v, want current/repository", got)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestRunWithDependenciesReturnsConfigurationErrorWhenAuthenticationIsMissing
 func TestRunWithDependenciesReturnsRuntimeErrorForGitHubFailure(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGitHubClient{collaboratorsError: errors.New("GitHub unavailable")}
+	client := &fakeGitHubClient{pullsError: errors.New("GitHub unavailable")}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
@@ -234,10 +234,6 @@ func TestRunWithDependenciesRendersDeduplicatedRetrospective(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	client := &fakeGitHubClient{
-		collaborators: []githubapi.Collaborator{
-			{Login: "alice"},
-			{Login: "bob"},
-		},
 		pulls: []githubapi.PullRequest{
 			{Number: 10, Author: "bob"},
 		},
@@ -265,12 +261,16 @@ func TestRunWithDependenciesRendersDeduplicatedRetrospective(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "alice     1") || !strings.Contains(stdout.String(), "bob       0") {
-		t.Fatalf("report =\n%s\nwant Alice to have 1 review and Bob to have 0", stdout.String())
+	if got := participationRowFields(stdout.String(), "alice"); !reflect.DeepEqual(got, []string{"alice", "1"}) {
+		t.Fatalf("alice participation row = %#v, want %#v", got, []string{"alice", "1"})
 	}
 
-	if got := matrixRowFields(stdout.String(), "bob"); !reflect.DeepEqual(got, []string{"bob", "1", "-"}) {
-		t.Fatalf("bob matrix row = %#v, want %#v", got, []string{"bob", "1", "-"})
+	if got := participationRowFields(stdout.String(), "bob"); !reflect.DeepEqual(got, []string{"bob", "0"}) {
+		t.Fatalf("bob participation row = %#v, want %#v", got, []string{"bob", "0"})
+	}
+
+	if got := matrixRowFields(stdout.String(), "bob"); !reflect.DeepEqual(got, []string{"bob", "1"}) {
+		t.Fatalf("bob matrix row = %#v, want %#v", got, []string{"bob", "1"})
 	}
 }
 
@@ -293,13 +293,6 @@ func TestRunWithDependenciesIntegration(t *testing.T) {
 		}
 
 		switch request.URL.Path {
-
-		case "/repos/acme/frontend/collaborators":
-			_ = json.NewEncoder(writer).Encode([]map[string]string{
-				{"login": "alice"},
-				{"login": "bob"},
-				{"login": "charlie"},
-			})
 
 		case "/repos/acme/frontend/pulls":
 			if got := request.URL.Query().Get("state"); got != "all" {
@@ -366,29 +359,37 @@ func TestRunWithDependenciesIntegration(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "alice     2") ||
-		!strings.Contains(stdout.String(), "bob       1") ||
-		!strings.Contains(stdout.String(), "charlie   0") {
-		t.Fatalf("report =\n%s\nwant participation alice=2, bob=1, charlie=0", stdout.String())
+	if !strings.Contains(stdout.String(), "Repository participants") {
+		t.Fatalf("report =\n%s\nwant repository participant heading", stdout.String())
+	}
+
+	for participant, want := range map[string][]string{
+		"alice":    {"alice", "2"},
+		"author-a": {"author-a", "0"},
+		"author-b": {"author-b", "0"},
+		"bob":      {"bob", "1"},
+	} {
+		if got := participationRowFields(stdout.String(), participant); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s participation row = %#v, want %#v", participant, got, want)
+		}
 	}
 
 	if strings.Contains(stdout.String(), "eve") {
-		t.Fatalf("report =\n%s\nmust not include old reviewer eve", stdout.String())
+		t.Fatalf("report =\n%s\nmust not include reviewer with only an old review", stdout.String())
 	}
 
-	if got := matrixRowFields(stdout.String(), "author-a"); !reflect.DeepEqual(got, []string{"author-a", "1", "1", "0"}) {
-		t.Fatalf("author-a matrix row = %#v, want %#v", got, []string{"author-a", "1", "1", "0"})
+	if got := matrixRowFields(stdout.String(), "author-a"); !reflect.DeepEqual(got, []string{"author-a", "1", "1"}) {
+		t.Fatalf("author-a matrix row = %#v, want %#v", got, []string{"author-a", "1", "1"})
 	}
 
-	if got := matrixRowFields(stdout.String(), "author-b"); !reflect.DeepEqual(got, []string{"author-b", "1", "0", "0"}) {
-		t.Fatalf("author-b matrix row = %#v, want %#v", got, []string{"author-b", "1", "0", "0"})
+	if got := matrixRowFields(stdout.String(), "author-b"); !reflect.DeepEqual(got, []string{"author-b", "1", "0"}) {
+		t.Fatalf("author-b matrix row = %#v, want %#v", got, []string{"author-b", "1", "0"})
 	}
 
 	requestedPathsMu.Lock()
 	gotPaths := append([]string(nil), requestedPaths...)
 	requestedPathsMu.Unlock()
 	wantPaths := []string{
-		"/repos/acme/frontend/collaborators",
 		"/repos/acme/frontend/pulls",
 		"/repos/acme/frontend/pulls/101/reviews",
 		"/repos/acme/frontend/pulls/102/reviews",
@@ -399,30 +400,20 @@ func TestRunWithDependenciesIntegration(t *testing.T) {
 }
 
 type fakeGitHubClient struct {
-	collaborators           []githubapi.Collaborator
-	collaboratorsError      error
-	collaboratorsRepository repository.Repository
-	pulls                   []githubapi.PullRequest
-	pullsError              error
-	pullsSince              time.Time
-	reviewsByPull           map[int][]githubapi.Review
-	reviewsErrorByPull      map[int]error
-}
-
-func (client *fakeGitHubClient) ListCollaborators(
-	_ context.Context,
-	repo repository.Repository,
-) ([]githubapi.Collaborator, error) {
-	client.collaboratorsRepository = repo
-
-	return client.collaborators, client.collaboratorsError
+	pulls              []githubapi.PullRequest
+	pullsError         error
+	pullsRepository    repository.Repository
+	pullsSince         time.Time
+	reviewsByPull      map[int][]githubapi.Review
+	reviewsErrorByPull map[int]error
 }
 
 func (client *fakeGitHubClient) ListPullRequestsUpdatedSince(
 	_ context.Context,
-	_ repository.Repository,
+	repo repository.Repository,
 	since time.Time,
 ) ([]githubapi.PullRequest, error) {
+	client.pullsRepository = repo
 	client.pullsSince = since
 
 	return client.pulls, client.pullsError
@@ -471,6 +462,31 @@ func matrixRowFields(report, author string) []string {
 
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[0] == author {
+			return fields
+		}
+	}
+
+	return nil
+}
+
+func participationRowFields(report, participant string) []string {
+	inParticipation := false
+	for _, line := range strings.Split(report, "\n") {
+		if line == "Repository participants" {
+			inParticipation = true
+			continue
+		}
+
+		if line == "Review matrix" {
+			return nil
+		}
+
+		if !inParticipation {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == participant {
 			return fields
 		}
 	}

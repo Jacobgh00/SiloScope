@@ -45,11 +45,11 @@ func TestWriteRetro(t *testing.T) {
 	want := `Repository: acme/frontend
 Since:      2026-09-01
 
-Review participation
-Reviewer  PRs reviewed
-alice     2
-bob       1
-charlie   0
+Repository participants
+Participant  PRs reviewed
+alice        2
+bob          1
+charlie      0
 
 Review matrix
 Author/Reviewer  alice  bob  charlie
