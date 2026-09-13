@@ -7,7 +7,7 @@
 Requires Go 1.27.
 
 ```sh
-go install .
+go install ./cmd/reviewstats
 ```
 
 ## Usage
