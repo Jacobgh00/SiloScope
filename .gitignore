@@ -1,2 +1,5 @@
 /reviewstats
 .DS_Store
+docs/
+.idea/
+.vscode/
