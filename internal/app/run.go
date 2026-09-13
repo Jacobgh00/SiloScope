@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"io"
 )
@@ -17,10 +18,9 @@ func Run(_ context.Context, args []string, _, stderr io.Writer) int {
 	flags.StringVar(&since, "since", "30d", "review period: Nd or YYYY-MM-DD")
 
 	if err := flags.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-
 		return 2
 	}
 
