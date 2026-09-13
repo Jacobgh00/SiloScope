@@ -23,7 +23,7 @@ func WriteRetro(
 	if _, err := fmt.Fprintln(writer, "Repository participants"); err != nil {
 		return err
 	}
-	if err := writeParticipation(writer, stats.Members); err != nil {
+	if err := writeParticipation(writer, stats.Participants); err != nil {
 		return err
 	}
 
@@ -48,14 +48,14 @@ func WriteRetro(
 	return err
 }
 
-func writeParticipation(writer io.Writer, members []reviewstats.MemberStat) error {
+func writeParticipation(writer io.Writer, participants []reviewstats.ParticipantStat) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "Participant\tPRs reviewed"); err != nil {
 		return err
 	}
 
-	for _, member := range members {
-		if _, err := fmt.Fprintf(table, "%s\t%d\n", member.Login, member.PullRequests); err != nil {
+	for _, participant := range participants {
+		if _, err := fmt.Fprintf(table, "%s\t%d\n", participant.Login, participant.ReviewedPullRequests); err != nil {
 			return err
 		}
 	}

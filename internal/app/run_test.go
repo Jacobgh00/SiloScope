@@ -51,6 +51,34 @@ func TestRunPrintsHelpWithSuccess(t *testing.T) {
 	}
 }
 
+func TestRunWithDependenciesRejectsUnexpectedPositionalArguments(t *testing.T) {
+	t.Parallel()
+
+	dependencies := testDependencies(&fakeGitHubClient{})
+	dependencies.currentRepo = func(context.Context) (repository.Repository, error) {
+		t.Fatal("current repository lookup must not run")
+		return repository.Repository{}, nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		context.Background(),
+		[]string{"ignored-argument"},
+		&stdout,
+		&stderr,
+		dependencies,
+	)
+
+	if exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "unexpected arguments: ignored-argument") {
+		t.Fatalf("stderr = %q, want positional argument error", stderr.String())
+	}
+}
+
 func TestRunWithDependenciesUsesExplicitRepository(t *testing.T) {
 	t.Parallel()
 

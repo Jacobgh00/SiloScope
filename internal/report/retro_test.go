@@ -15,10 +15,10 @@ func TestWriteRetro(t *testing.T) {
 	t.Parallel()
 
 	stats := reviewstats.RetroStats{
-		Members: []reviewstats.MemberStat{
-			{Login: "alice", PullRequests: 2},
-			{Login: "bob", PullRequests: 1},
-			{Login: "charlie", PullRequests: 0},
+		Participants: []reviewstats.ParticipantStat{
+			{Login: "alice", ReviewedPullRequests: 2},
+			{Login: "bob", ReviewedPullRequests: 1},
+			{Login: "charlie", ReviewedPullRequests: 0},
 		},
 		Matrix: reviewstats.ReviewMatrix{
 			Authors:   []string{"alice", "bob", "charlie"},

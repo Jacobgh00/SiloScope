@@ -22,6 +22,8 @@ reviewstats --repo acme/frontend --since 2026-09-01
 
 `--since` accepts a positive number of days such as `7d` or `30d`, or an ISO date in `YYYY-MM-DD` form. The default period is `30d`.
 
+`reviewstats` accepts flags only and rejects positional arguments.
+
 When `--repo` is omitted, `reviewstats` reads `remote.origin.url` from the current Git repository:
 
 ```sh

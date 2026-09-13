@@ -47,7 +47,7 @@ func (c *Client) ListReviews(
 			&currentPage,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("list pull request reviews: %w", err)
+			return nil, fmt.Errorf("list reviews for pull request #%d: %w", pullRequestNumber, err)
 		}
 
 		for _, review := range currentPage {

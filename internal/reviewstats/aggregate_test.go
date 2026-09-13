@@ -20,9 +20,9 @@ func TestAggregateCountsOneApprovedReview(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 1},
-		{Login: "bob", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 1},
+		{Login: "bob", ReviewedPullRequests: 0},
 	})
 }
 
@@ -41,9 +41,9 @@ func TestAggregateDeduplicatesRepeatedReviewsOnOnePullRequest(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 1},
-		{Login: "bob", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 1},
+		{Login: "bob", ReviewedPullRequests: 0},
 	})
 
 	if got := stats.Matrix.Counts["bob"]["alice"]; got != 1 {
@@ -67,9 +67,9 @@ func TestAggregateCountsDistinctPullRequests(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 2},
-		{Login: "bob", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 2},
+		{Login: "bob", ReviewedPullRequests: 0},
 	})
 }
 
@@ -85,8 +85,8 @@ func TestAggregateKeepsPullRequestAuthorsWithNoQualifyingReviews(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 0},
 	})
 }
 
@@ -105,8 +105,8 @@ func TestAggregateExcludesSelfReviewsAndPendingReviews(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 0},
 	})
 }
 
@@ -122,13 +122,13 @@ func TestAggregateCountsDismissedReviews(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 1},
-		{Login: "bob", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 1},
+		{Login: "bob", ReviewedPullRequests: 0},
 	})
 }
 
-func TestAggregateSortsMembersByReviewCountThenLogin(t *testing.T) {
+func TestAggregateSortsParticipantsByReviewCountThenLogin(t *testing.T) {
 	t.Parallel()
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -148,11 +148,11 @@ func TestAggregateSortsMembersByReviewCountThenLogin(t *testing.T) {
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "bob", PullRequests: 2},
-		{Login: "alpha", PullRequests: 1},
-		{Login: "zed", PullRequests: 1},
-		{Login: "author", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "bob", ReviewedPullRequests: 2},
+		{Login: "alpha", ReviewedPullRequests: 1},
+		{Login: "zed", ReviewedPullRequests: 1},
+		{Login: "author", ReviewedPullRequests: 0},
 	})
 }
 
@@ -178,11 +178,11 @@ func TestAggregateBuildsDistinctMatrixLinksAndIncludesExternalReviewers(t *testi
 		cutoff,
 	)
 
-	assertMembers(t, stats, []MemberStat{
-		{Login: "alice", PullRequests: 2},
-		{Login: "bob", PullRequests: 1},
-		{Login: "eve", PullRequests: 1},
-		{Login: "charlie", PullRequests: 0},
+	assertParticipants(t, stats, []ParticipantStat{
+		{Login: "alice", ReviewedPullRequests: 2},
+		{Login: "bob", ReviewedPullRequests: 1},
+		{Login: "eve", ReviewedPullRequests: 1},
+		{Login: "charlie", ReviewedPullRequests: 0},
 	})
 
 	wantMatrix := ReviewMatrix{
@@ -212,10 +212,10 @@ func reviewEvent(number int, reviewer, state string, submittedAt time.Time) gith
 	}
 }
 
-func assertMembers(t *testing.T, stats RetroStats, want []MemberStat) {
+func assertParticipants(t *testing.T, stats RetroStats, want []ParticipantStat) {
 	t.Helper()
 
-	if !reflect.DeepEqual(stats.Members, want) {
-		t.Fatalf("members = %#v, want %#v", stats.Members, want)
+	if !reflect.DeepEqual(stats.Participants, want) {
+		t.Fatalf("participants = %#v, want %#v", stats.Participants, want)
 	}
 }

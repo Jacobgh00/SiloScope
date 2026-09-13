@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"reviewstats/internal/auth"
@@ -53,6 +54,11 @@ func runWithDependencies(
 			return 0
 		}
 
+		return 2
+	}
+
+	if flags.NArg() > 0 {
+		reportError(stderr, fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " ")))
 		return 2
 	}
 

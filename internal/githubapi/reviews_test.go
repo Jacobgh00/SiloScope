@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,32 @@ func TestListReviewsDecodesCompleteReviewRecords(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ListReviews() = %#v, want %#v", got, want)
+	}
+}
+
+func TestListReviewsIncludesPullRequestNumberInRequestErrors(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := newReviewTestClient(t, server)
+	_, err := client.ListReviews(
+		context.Background(),
+		repository.Repository{Owner: "acme", Name: "frontend"},
+		42,
+	)
+
+	if err == nil {
+		t.Fatal("ListReviews() error = nil, want error")
+	}
+
+	for _, want := range []string{"pull request #42", "503 Service Unavailable"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ListReviews() error = %q, want %q", err, want)
+		}
 	}
 }
 

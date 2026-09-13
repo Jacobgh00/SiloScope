@@ -7,9 +7,9 @@ import (
 	"reviewstats/internal/githubapi"
 )
 
-type MemberStat struct {
-	Login        string
-	PullRequests int
+type ParticipantStat struct {
+	Login                string
+	ReviewedPullRequests int
 }
 
 type ReviewMatrix struct {
@@ -19,8 +19,8 @@ type ReviewMatrix struct {
 }
 
 type RetroStats struct {
-	Members []MemberStat
-	Matrix  ReviewMatrix
+	Participants []ParticipantStat
+	Matrix       ReviewMatrix
 }
 
 func Aggregate(
@@ -28,7 +28,7 @@ func Aggregate(
 	reviewsByPull map[int][]githubapi.Review,
 	since time.Time,
 ) RetroStats {
-	members := make(map[string]struct{})
+	participants := make(map[string]struct{})
 	authors := make(map[string]struct{})
 	reviewers := make(map[string]struct{})
 	reviewedPullsByReviewer := make(map[string]map[int]struct{})
@@ -37,7 +37,7 @@ func Aggregate(
 	for _, pull := range pulls {
 		if pull.Author != "" {
 			authors[pull.Author] = struct{}{}
-			members[pull.Author] = struct{}{}
+			participants[pull.Author] = struct{}{}
 		}
 
 		for _, review := range reviewsByPull[pull.Number] {
@@ -45,7 +45,7 @@ func Aggregate(
 				continue
 			}
 
-			members[review.Reviewer] = struct{}{}
+			participants[review.Reviewer] = struct{}{}
 			reviewers[review.Reviewer] = struct{}{}
 			addPullForReviewer(reviewedPullsByReviewer, review.Reviewer, pull.Number)
 
@@ -55,12 +55,12 @@ func Aggregate(
 		}
 	}
 
-	memberStats := memberStatsFrom(members, reviewedPullsByReviewer)
+	participantStats := participantStatsFrom(participants, reviewedPullsByReviewer)
 	authorLogins := sortedLogins(authors)
 	reviewerLogins := sortedLogins(reviewers)
 
 	return RetroStats{
-		Members: memberStats,
+		Participants: participantStats,
 		Matrix: ReviewMatrix{
 			Authors:   authorLogins,
 			Reviewers: reviewerLogins,
@@ -100,21 +100,21 @@ func addPullForMatrix(
 	matrixPulls[author][reviewer][pullNumber] = struct{}{}
 }
 
-func memberStatsFrom(
-	members map[string]struct{},
+func participantStatsFrom(
+	participants map[string]struct{},
 	reviewedPullsByReviewer map[string]map[int]struct{},
-) []MemberStat {
-	stats := make([]MemberStat, 0, len(members))
-	for login := range members {
-		stats = append(stats, MemberStat{
-			Login:        login,
-			PullRequests: len(reviewedPullsByReviewer[login]),
+) []ParticipantStat {
+	stats := make([]ParticipantStat, 0, len(participants))
+	for login := range participants {
+		stats = append(stats, ParticipantStat{
+			Login:                login,
+			ReviewedPullRequests: len(reviewedPullsByReviewer[login]),
 		})
 	}
 
 	sort.Slice(stats, func(left, right int) bool {
-		if stats[left].PullRequests != stats[right].PullRequests {
-			return stats[left].PullRequests > stats[right].PullRequests
+		if stats[left].ReviewedPullRequests != stats[right].ReviewedPullRequests {
+			return stats[left].ReviewedPullRequests > stats[right].ReviewedPullRequests
 		}
 
 		return stats[left].Login < stats[right].Login
