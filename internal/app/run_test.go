@@ -3,9 +3,13 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +271,130 @@ func TestRunWithDependenciesRendersDeduplicatedRetrospective(t *testing.T) {
 
 	if got := matrixRowFields(stdout.String(), "bob"); !reflect.DeepEqual(got, []string{"bob", "1", "-"}) {
 		t.Fatalf("bob matrix row = %#v, want %#v", got, []string{"bob", "1", "-"})
+	}
+}
+
+func TestRunWithDependenciesIntegration(t *testing.T) {
+	t.Parallel()
+
+	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var requestedPaths []string
+	var requestedPathsMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPathsMu.Lock()
+		requestedPaths = append(requestedPaths, request.URL.Path)
+		requestedPathsMu.Unlock()
+
+		if got := request.URL.Query().Get("per_page"); got != "100" {
+			t.Errorf("per_page query = %q, want %q", got, "100")
+		}
+		if got := request.URL.Query().Get("page"); got != "1" {
+			t.Errorf("page query = %q, want %q", got, "1")
+		}
+
+		switch request.URL.Path {
+
+		case "/repos/acme/frontend/collaborators":
+			_ = json.NewEncoder(writer).Encode([]map[string]string{
+				{"login": "alice"},
+				{"login": "bob"},
+				{"login": "charlie"},
+			})
+
+		case "/repos/acme/frontend/pulls":
+			if got := request.URL.Query().Get("state"); got != "all" {
+				t.Errorf("state query = %q, want %q", got, "all")
+			}
+			if got := request.URL.Query().Get("sort"); got != "updated" {
+				t.Errorf("sort query = %q, want %q", got, "updated")
+			}
+			if got := request.URL.Query().Get("direction"); got != "desc" {
+				t.Errorf("direction query = %q, want %q", got, "desc")
+			}
+			_ = json.NewEncoder(writer).Encode([]map[string]any{
+				{
+					"number":     101,
+					"user":       map[string]string{"login": "author-a"},
+					"updated_at": cutoff.Add(2 * time.Hour),
+				},
+				{
+					"number":     102,
+					"user":       map[string]string{"login": "author-b"},
+					"updated_at": cutoff.Add(time.Hour),
+				},
+			})
+
+		case "/repos/acme/frontend/pulls/101/reviews":
+			_ = json.NewEncoder(writer).Encode([]map[string]any{
+				{"state": "APPROVED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "alice"}},
+				{"state": "COMMENTED", "submitted_at": cutoff.Add(2 * time.Hour), "user": map[string]string{"login": "bob"}},
+				{"state": "APPROVED", "submitted_at": cutoff.Add(3 * time.Hour), "user": map[string]string{"login": "bob"}},
+				{"state": "APPROVED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "author-a"}},
+				{"state": "APPROVED", "submitted_at": cutoff.Add(-time.Second), "user": map[string]string{"login": "eve"}},
+			})
+
+		case "/repos/acme/frontend/pulls/102/reviews":
+			_ = json.NewEncoder(writer).Encode([]map[string]any{
+				{"state": "CHANGES_REQUESTED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "alice"}},
+			})
+
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := githubapi.NewClientWithBaseURL("test-token", server.Client(), server.URL)
+	if err != nil {
+		t.Fatalf("NewClientWithBaseURL() error = %v", err)
+	}
+
+	dependencies := testDependencies(client)
+	dependencies.now = func() time.Time { return cutoff.AddDate(0, 0, 30) }
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		context.Background(),
+		[]string{"--repo", "acme/frontend", "--since", "2026-09-01"},
+		&stdout,
+		&stderr,
+		dependencies,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "alice     2") ||
+		!strings.Contains(stdout.String(), "bob       1") ||
+		!strings.Contains(stdout.String(), "charlie   0") {
+		t.Fatalf("report =\n%s\nwant participation alice=2, bob=1, charlie=0", stdout.String())
+	}
+
+	if strings.Contains(stdout.String(), "eve") {
+		t.Fatalf("report =\n%s\nmust not include old reviewer eve", stdout.String())
+	}
+
+	if got := matrixRowFields(stdout.String(), "author-a"); !reflect.DeepEqual(got, []string{"author-a", "1", "1", "0"}) {
+		t.Fatalf("author-a matrix row = %#v, want %#v", got, []string{"author-a", "1", "1", "0"})
+	}
+
+	if got := matrixRowFields(stdout.String(), "author-b"); !reflect.DeepEqual(got, []string{"author-b", "1", "0", "0"}) {
+		t.Fatalf("author-b matrix row = %#v, want %#v", got, []string{"author-b", "1", "0", "0"})
+	}
+
+	requestedPathsMu.Lock()
+	gotPaths := append([]string(nil), requestedPaths...)
+	requestedPathsMu.Unlock()
+	wantPaths := []string{
+		"/repos/acme/frontend/collaborators",
+		"/repos/acme/frontend/pulls",
+		"/repos/acme/frontend/pulls/101/reviews",
+		"/repos/acme/frontend/pulls/102/reviews",
+	}
+	if !reflect.DeepEqual(gotPaths, wantPaths) {
+		t.Fatalf("requested paths = %#v, want %#v", gotPaths, wantPaths)
 	}
 }
 
