@@ -26,8 +26,7 @@ type dependencies struct {
 }
 
 type githubClient interface {
-	ListPullRequestsUpdatedSince(context.Context, repository.Repository, time.Time) ([]githubapi.PullRequest, error)
-	ListReviews(context.Context, repository.Repository, int) ([]githubapi.Review, error)
+	LoadReviewActivity(context.Context, repository.Repository, time.Time) (githubapi.ReviewActivity, error)
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -80,24 +79,13 @@ func runWithDependencies(
 	}
 
 	client := dependencies.newClient(token)
-	pulls, err := client.ListPullRequestsUpdatedSince(ctx, repo, since)
+	activity, err := client.LoadReviewActivity(ctx, repo, since)
 	if err != nil {
 		reportError(stderr, err)
 		return 1
 	}
 
-	reviewsByPull := make(map[int][]githubapi.Review, len(pulls))
-	for _, pull := range pulls {
-		reviews, err := client.ListReviews(ctx, repo, pull.Number)
-		if err != nil {
-			reportError(stderr, err)
-			return 1
-		}
-
-		reviewsByPull[pull.Number] = reviews
-	}
-
-	stats := reviewstats.Aggregate(pulls, reviewsByPull, since)
+	stats := reviewstats.Aggregate(activity.PullRequests, activity.ReviewsByPull, since)
 	if err := report.WriteRetro(stdout, repo, since, stats); err != nil {
 		reportError(stderr, err)
 		return 1

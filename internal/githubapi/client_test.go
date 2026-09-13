@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +15,8 @@ func TestNewClientUsesGitHubDefaults(t *testing.T) {
 
 	client := NewClient("test-token", nil)
 
-	if got := client.baseURL.String(); got != "https://api.github.com/" {
-		t.Fatalf("base URL = %q, want %q", got, "https://api.github.com/")
+	if got := client.graphqlURL.String(); got != "https://api.github.com/graphql" {
+		t.Fatalf("GraphQL URL = %q, want %q", got, "https://api.github.com/graphql")
 	}
 
 	if got := client.httpClient.Timeout; got != 20*time.Second {
@@ -33,37 +32,46 @@ func TestNewClientWithBaseURLRejectsInvalidURL(t *testing.T) {
 	}
 }
 
-func TestClientGetSendsGitHubRequestContract(t *testing.T) {
+func TestClientGraphQLSendsGitHubRequestContract(t *testing.T) {
 	t.Parallel()
 
+	const query = "query Viewer { viewer { login } }"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			t.Errorf("method = %q, want %q", request.Method, http.MethodGet)
+		if request.Method != http.MethodPost {
+			t.Errorf("method = %q, want %q", request.Method, http.MethodPost)
 		}
 
-		if request.URL.Path != "/repos/acme/frontend" {
-			t.Errorf("path = %q, want %q", request.URL.Path, "/repos/acme/frontend")
+		if request.URL.Path != "/graphql" {
+			t.Errorf("path = %q, want %q", request.URL.Path, "/graphql")
 		}
 
-		if got := request.URL.Query().Get("state"); got != "all" {
-			t.Errorf("state query = %q, want %q", got, "all")
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want %q", got, "application/json")
 		}
 
-		for header, want := range map[string]string{
-			"Accept":               "application/vnd.github+json",
-			"Authorization":        "Bearer test-token",
-			"X-GitHub-Api-Version": "2026-03-10",
-			"User-Agent":           "reviewstats",
-		} {
-			if got := request.Header.Get(header); got != want {
-				t.Errorf("%s header = %q, want %q", header, got, want)
-			}
+		assertGitHubHeaders(t, request)
+
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode GraphQL request = %v", err)
 		}
 
-		writer.Header().Set("X-RateLimit-Remaining", "4999")
-		_ = json.NewEncoder(writer).Encode(struct {
-			Login string `json:"login"`
-		}{Login: "octocat"})
+		if payload.Query != query {
+			t.Errorf("query = %q, want %q", payload.Query, query)
+		}
+
+		if got := payload.Variables["owner"]; got != "acme" {
+			t.Errorf("owner variable = %#v, want %q", got, "acme")
+		}
+
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"data": map[string]any{
+				"viewer": map[string]string{"login": "octocat"},
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -73,29 +81,56 @@ func TestClientGetSendsGitHubRequestContract(t *testing.T) {
 	}
 
 	var destination struct {
-		Login string `json:"login"`
+		Viewer struct {
+			Login string `json:"login"`
+		} `json:"viewer"`
 	}
 
-	headers, err := client.get(
+	err = client.graphql(
 		context.Background(),
-		"/repos/acme/frontend",
-		url.Values{"state": {"all"}},
+		query,
+		map[string]string{"owner": "acme"},
 		&destination,
 	)
 	if err != nil {
-		t.Fatalf("get() error = %v", err)
+		t.Fatalf("graphql() error = %v", err)
 	}
 
-	if destination.Login != "octocat" {
-		t.Fatalf("decoded login = %q, want %q", destination.Login, "octocat")
-	}
-
-	if got := headers.Get("X-RateLimit-Remaining"); got != "4999" {
-		t.Fatalf("response header = %q, want %q", got, "4999")
+	if destination.Viewer.Login != "octocat" {
+		t.Fatalf("decoded login = %q, want %q", destination.Viewer.Login, "octocat")
 	}
 }
 
-func TestClientGetReturnsTokenSafeAPIError(t *testing.T) {
+func TestClientGraphQLReturnsTokenSafeEnvelopeError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"errors": []map[string]string{{"message": "bad credentials for test-token"}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithBaseURL("test-token", server.Client(), server.URL)
+	if err != nil {
+		t.Fatalf("NewClientWithBaseURL() error = %v", err)
+	}
+
+	err = client.graphql(context.Background(), "query { viewer { login } }", nil, &struct{}{})
+	if err == nil {
+		t.Fatal("graphql() error = nil, want error")
+	}
+
+	if !strings.Contains(err.Error(), "GitHub GraphQL request failed") {
+		t.Fatalf("graphql() error = %q, want GraphQL error context", err)
+	}
+
+	if strings.Contains(err.Error(), "test-token") {
+		t.Fatalf("graphql() error = %q, must not contain token", err)
+	}
+}
+
+func TestClientGraphQLReturnsTokenSafeAPIError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -109,20 +144,35 @@ func TestClientGetReturnsTokenSafeAPIError(t *testing.T) {
 		t.Fatalf("NewClientWithBaseURL() error = %v", err)
 	}
 
-	_, err = client.get(context.Background(), "/repos/acme/missing", nil, &struct{}{})
+	err = client.graphql(context.Background(), "query { viewer { login } }", nil, &struct{}{})
 	if err == nil {
-		t.Fatal("get() error = nil, want error")
+		t.Fatal("graphql() error = nil, want error")
 	}
 
 	if !strings.Contains(err.Error(), "404 Not Found") {
-		t.Fatalf("get() error = %q, want HTTP status", err)
+		t.Fatalf("graphql() error = %q, want HTTP status", err)
 	}
 
 	if !strings.Contains(err.Error(), "Repository unavailable") {
-		t.Fatalf("get() error = %q, want GitHub message", err)
+		t.Fatalf("graphql() error = %q, want GitHub message", err)
 	}
 
 	if strings.Contains(err.Error(), "test-token") {
-		t.Fatalf("get() error = %q, must not contain token", err)
+		t.Fatalf("graphql() error = %q, must not contain token", err)
+	}
+}
+
+func assertGitHubHeaders(t *testing.T, request *http.Request) {
+	t.Helper()
+
+	for header, want := range map[string]string{
+		"Accept":               "application/vnd.github+json",
+		"Authorization":        "Bearer test-token",
+		"X-GitHub-Api-Version": "2026-03-10",
+		"User-Agent":           "reviewstats",
+	} {
+		if got := request.Header.Get(header); got != want {
+			t.Errorf("%s header = %q, want %q", header, got, want)
+		}
 	}
 }

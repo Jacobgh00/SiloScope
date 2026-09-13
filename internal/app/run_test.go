@@ -108,8 +108,8 @@ func TestRunWithDependenciesUsesExplicitRepository(t *testing.T) {
 		t.Fatalf("current repository calls = %d, want 0", currentRepoCalls)
 	}
 
-	if got := client.pullsRepository; got != (repository.Repository{Owner: "acme", Name: "frontend"}) {
-		t.Fatalf("pull request repository = %#v, want acme/frontend", got)
+	if got := client.activityRepository; got != (repository.Repository{Owner: "acme", Name: "frontend"}) {
+		t.Fatalf("activity repository = %#v, want acme/frontend", got)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestRunWithDependenciesUsesCurrentRepositoryWhenRepoFlagIsAbsent(t *testing
 		t.Fatalf("exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
 	}
 
-	if got := client.pullsRepository; got != (repository.Repository{Owner: "current", Name: "repository"}) {
-		t.Fatalf("pull request repository = %#v, want current/repository", got)
+	if got := client.activityRepository; got != (repository.Repository{Owner: "current", Name: "repository"}) {
+		t.Fatalf("activity repository = %#v, want current/repository", got)
 	}
 }
 
@@ -158,8 +158,8 @@ func TestRunWithDependenciesUsesDefaultSincePeriod(t *testing.T) {
 	}
 
 	want := now.AddDate(0, 0, -30)
-	if !client.pullsSince.Equal(want) {
-		t.Fatalf("pull request cutoff = %v, want %v", client.pullsSince, want)
+	if !client.activitySince.Equal(want) {
+		t.Fatalf("activity cutoff = %v, want %v", client.activitySince, want)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestRunWithDependenciesReturnsConfigurationErrorWhenAuthenticationIsMissing
 func TestRunWithDependenciesReturnsRuntimeErrorForGitHubFailure(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGitHubClient{pullsError: errors.New("GitHub unavailable")}
+	client := &fakeGitHubClient{activityError: errors.New("GitHub unavailable")}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
@@ -262,13 +262,15 @@ func TestRunWithDependenciesRendersDeduplicatedRetrospective(t *testing.T) {
 
 	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	client := &fakeGitHubClient{
-		pulls: []githubapi.PullRequest{
-			{Number: 10, Author: "bob"},
-		},
-		reviewsByPull: map[int][]githubapi.Review{
-			10: {
-				{PullRequestNumber: 10, Reviewer: "alice", State: "COMMENTED", SubmittedAt: cutoff},
-				{PullRequestNumber: 10, Reviewer: "alice", State: "APPROVED", SubmittedAt: cutoff.Add(time.Minute)},
+		activity: githubapi.ReviewActivity{
+			PullRequests: []githubapi.PullRequest{
+				{Number: 10, Author: "bob"},
+			},
+			ReviewsByPull: map[int][]githubapi.Review{
+				10: {
+					{PullRequestNumber: 10, Reviewer: "alice", State: "COMMENTED", SubmittedAt: cutoff},
+					{PullRequestNumber: 10, Reviewer: "alice", State: "APPROVED", SubmittedAt: cutoff.Add(time.Minute)},
+				},
 			},
 		},
 	}
@@ -313,55 +315,69 @@ func TestRunWithDependenciesIntegration(t *testing.T) {
 		requestedPaths = append(requestedPaths, request.URL.Path)
 		requestedPathsMu.Unlock()
 
-		if got := request.URL.Query().Get("per_page"); got != "100" {
-			t.Errorf("per_page query = %q, want %q", got, "100")
-		}
-		if got := request.URL.Query().Get("page"); got != "1" {
-			t.Errorf("page query = %q, want %q", got, "1")
-		}
-
-		switch request.URL.Path {
-
-		case "/repos/acme/frontend/pulls":
-			if got := request.URL.Query().Get("state"); got != "all" {
-				t.Errorf("state query = %q, want %q", got, "all")
-			}
-			if got := request.URL.Query().Get("sort"); got != "updated" {
-				t.Errorf("sort query = %q, want %q", got, "updated")
-			}
-			if got := request.URL.Query().Get("direction"); got != "desc" {
-				t.Errorf("direction query = %q, want %q", got, "desc")
-			}
-			_ = json.NewEncoder(writer).Encode([]map[string]any{
-				{
-					"number":     101,
-					"user":       map[string]string{"login": "author-a"},
-					"updated_at": cutoff.Add(2 * time.Hour),
-				},
-				{
-					"number":     102,
-					"user":       map[string]string{"login": "author-b"},
-					"updated_at": cutoff.Add(time.Hour),
-				},
-			})
-
-		case "/repos/acme/frontend/pulls/101/reviews":
-			_ = json.NewEncoder(writer).Encode([]map[string]any{
-				{"state": "APPROVED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "alice"}},
-				{"state": "COMMENTED", "submitted_at": cutoff.Add(2 * time.Hour), "user": map[string]string{"login": "bob"}},
-				{"state": "APPROVED", "submitted_at": cutoff.Add(3 * time.Hour), "user": map[string]string{"login": "bob"}},
-				{"state": "APPROVED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "author-a"}},
-				{"state": "APPROVED", "submitted_at": cutoff.Add(-time.Second), "user": map[string]string{"login": "eve"}},
-			})
-
-		case "/repos/acme/frontend/pulls/102/reviews":
-			_ = json.NewEncoder(writer).Encode([]map[string]any{
-				{"state": "CHANGES_REQUESTED", "submitted_at": cutoff.Add(time.Hour), "user": map[string]string{"login": "alice"}},
-			})
-
-		default:
+		if request.Method != http.MethodPost || request.URL.Path != "/graphql" {
 			http.NotFound(writer, request)
+			return
 		}
+
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode GraphQL request = %v", err)
+		}
+
+		if !strings.Contains(payload.Query, "ReviewActivity") {
+			t.Errorf("query = %q, want ReviewActivity query", payload.Query)
+		}
+		if got := payload.Variables["owner"]; got != "acme" {
+			t.Errorf("owner variable = %#v, want %q", got, "acme")
+		}
+		if got := payload.Variables["name"]; got != "frontend" {
+			t.Errorf("name variable = %#v, want %q", got, "frontend")
+		}
+		if got := payload.Variables["after"]; got != nil {
+			t.Errorf("after variable = %#v, want nil", got)
+		}
+
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"data": map[string]any{
+				"repository": map[string]any{
+					"pullRequests": map[string]any{
+						"nodes": []map[string]any{
+							{
+								"number":    101,
+								"updatedAt": cutoff.Add(2 * time.Hour),
+								"author":    map[string]string{"login": "author-a"},
+								"reviews": map[string]any{
+									"nodes": []map[string]any{
+										{"state": "APPROVED", "submittedAt": cutoff.Add(time.Hour), "author": map[string]string{"login": "alice"}},
+										{"state": "COMMENTED", "submittedAt": cutoff.Add(2 * time.Hour), "author": map[string]string{"login": "bob"}},
+										{"state": "APPROVED", "submittedAt": cutoff.Add(3 * time.Hour), "author": map[string]string{"login": "bob"}},
+										{"state": "APPROVED", "submittedAt": cutoff.Add(time.Hour), "author": map[string]string{"login": "author-a"}},
+										{"state": "APPROVED", "submittedAt": cutoff.Add(-time.Second), "author": map[string]string{"login": "eve"}},
+									},
+									"pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+								},
+							},
+							{
+								"number":    102,
+								"updatedAt": cutoff.Add(time.Hour),
+								"author":    map[string]string{"login": "author-b"},
+								"reviews": map[string]any{
+									"nodes": []map[string]any{
+										{"state": "CHANGES_REQUESTED", "submittedAt": cutoff.Add(time.Hour), "author": map[string]string{"login": "alice"}},
+									},
+									"pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+								},
+							},
+						},
+						"pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+					},
+				},
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -417,46 +433,28 @@ func TestRunWithDependenciesIntegration(t *testing.T) {
 	requestedPathsMu.Lock()
 	gotPaths := append([]string(nil), requestedPaths...)
 	requestedPathsMu.Unlock()
-	wantPaths := []string{
-		"/repos/acme/frontend/pulls",
-		"/repos/acme/frontend/pulls/101/reviews",
-		"/repos/acme/frontend/pulls/102/reviews",
-	}
+	wantPaths := []string{"/graphql"}
 	if !reflect.DeepEqual(gotPaths, wantPaths) {
 		t.Fatalf("requested paths = %#v, want %#v", gotPaths, wantPaths)
 	}
 }
 
 type fakeGitHubClient struct {
-	pulls              []githubapi.PullRequest
-	pullsError         error
-	pullsRepository    repository.Repository
-	pullsSince         time.Time
-	reviewsByPull      map[int][]githubapi.Review
-	reviewsErrorByPull map[int]error
+	activity           githubapi.ReviewActivity
+	activityError      error
+	activityRepository repository.Repository
+	activitySince      time.Time
 }
 
-func (client *fakeGitHubClient) ListPullRequestsUpdatedSince(
+func (client *fakeGitHubClient) LoadReviewActivity(
 	_ context.Context,
 	repo repository.Repository,
 	since time.Time,
-) ([]githubapi.PullRequest, error) {
-	client.pullsRepository = repo
-	client.pullsSince = since
+) (githubapi.ReviewActivity, error) {
+	client.activityRepository = repo
+	client.activitySince = since
 
-	return client.pulls, client.pullsError
-}
-
-func (client *fakeGitHubClient) ListReviews(
-	_ context.Context,
-	_ repository.Repository,
-	pullRequestNumber int,
-) ([]githubapi.Review, error) {
-	if err := client.reviewsErrorByPull[pullRequestNumber]; err != nil {
-		return nil, err
-	}
-
-	return client.reviewsByPull[pullRequestNumber], nil
+	return client.activity, client.activityError
 }
 
 func testDependencies(client githubClient) dependencies {
